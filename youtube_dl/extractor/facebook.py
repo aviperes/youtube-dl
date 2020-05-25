@@ -475,8 +475,7 @@ class FacebookIE(InfoExtractor):
                              or self._search_regex(r'publish_time&quot;:([\d]+)', tahoe_data.primary, 'timestamp', default=None)\
                              or self._search_regex(r'publish_time&quot;:([\d]+)', tahoe_data.secondary, 'timestamp', default=None)
 
-            timestamp = int_or_none(regex_search_result_date_time
-            ) or int_or_none(regex_search_result_publish_time)
+            timestamp = int_or_none(regex_search_result_date_time) or int_or_none(regex_search_result_publish_time)
 
 
 
