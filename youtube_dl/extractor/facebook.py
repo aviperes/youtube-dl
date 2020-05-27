@@ -16,6 +16,7 @@ from ..compat import (
     compat_urllib_error,
     compat_urllib_parse_unquote,
     compat_urllib_parse_unquote_plus,
+    compat_urllib_parse_unquote_to_bytes
 )
 from ..utils import (
     clean_html,
@@ -32,6 +33,7 @@ from ..utils import (
     update_url_query,
     lowercase_escape,
     parse_iso8601,
+    unescapeHTML,
 )
 
 class FacebookIE(InfoExtractor):
@@ -540,9 +542,7 @@ class FacebookIE(InfoExtractor):
         thumbnail = self._search_regex(r'"thumbnailUrl":"(.+?)"', webpage, 'thumbnail')
         is_live, live_status = self.resolve_new_ui_live_info(webpage, tahoe_data)
 
-        url = self._search_regex(r'href=https:\/\/www\.facebook\.com\/(.+?)"', webpage, 'url')
-        url = self.build_url(url)
-        formats = self.resolve_new_ui_format(url, subtitles)
+        formats = self.resolve_new_ui_format(webpage)
         info_dict = self.build_info_dict(webpage, tahoe_data, video_id, video_title, formats, uploader, timestamp,
                                          thumbnail, post_view_counts, channel_id, is_live, live_status, likes,
                                          share_counts, {}, comments_count, other_post_view_counts,
@@ -726,22 +726,25 @@ class FacebookIE(InfoExtractor):
             live_status ='live'
         return is_live_vod, live_status
 
-    def resolve_new_ui_format(self, url, description):
+    def resolve_new_ui_format(self, webpage):
+        format_url = self.build_format_url(webpage)
+        width = parse_count(self._search_regex(r'<meta property="og:video:width" content="(.+?)"', webpage, 'width'))
+        height = parse_count(self._search_regex(r'<meta property="og:video:height" content="(.+?)"', webpage, 'height'))
+
         formats = []
         formats.append({
-            'url': url,
-            'height': 360,
-            'width': 360,
+            'url': format_url,
+            'height': width,
+            'width': height,
             'ext': 'mp4',
         })
-        self._sort_formats(formats)
-
         return formats
 
-
-    def build_url(self, url):
-        full_url = ("https://video-iad3-1.xx.fbcdn.net/v/t42.26565-2/10000000_146951183537525_1333275759317050157_n.mp4?_nc_cat=103&_nc_sid=985c63&efg=eyJ2ZW5jb2RlX3RhZyI6Im9lcF9zZCJ9&_nc_ohc=6OAyyFtxrMkAX8u8eGd&_nc_ht=video-iad3-1.xx&oh=39abbec81a8ae5357e5e306c755a0e8d&oe=5ECCD706")
-        return str(full_url.decode("utf-8"))
+    def build_format_url(self, webpage):
+        content_url = self._search_regex(r' content="https(.+?)"', webpage, 'url', fatal=False)
+        format_url = 'https%s' % content_url
+        format_url = unescapeHTML(format_url)
+        return format_url
 
 
 class FacebookTahoeData:
