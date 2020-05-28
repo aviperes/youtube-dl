@@ -635,6 +635,7 @@ class FacebookIE(InfoExtractor):
         values = re.findall(r'(\d.\d+\w?) Views', tahoe_data.secondary)
         if values:
             return values[-1]
+
         values = re.findall(r'(\d+\w?) Views', tahoe_data.secondary)
         if values:
             return values[-1]
