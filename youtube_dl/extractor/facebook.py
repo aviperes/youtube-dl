@@ -1,13 +1,7 @@
 # coding: utf-8
 from __future__ import unicode_literals
-
-import ast
-import datetime
-import json
 import re
 import socket
-
-from bs4 import BeautifulSoup
 
 from .common import InfoExtractor
 from ..compat import (
@@ -15,8 +9,7 @@ from ..compat import (
     compat_http_client,
     compat_urllib_error,
     compat_urllib_parse_unquote,
-    compat_urllib_parse_unquote_plus,
-    compat_urllib_parse_unquote_to_bytes
+    compat_urllib_parse_unquote_plus
 )
 from ..utils import (
     clean_html,
@@ -403,15 +396,8 @@ class FacebookIE(InfoExtractor):
         is_live_stream = video_data[0].get('is_live_stream', False)
         is_broadcast = video_data[0].get('is_broadcast', False)
 
-        live_status = 'not_live'
-        if is_broadcast:
-            live_status = 'completed'
-            if is_live_stream:
-                live_status = 'live'
-                if is_scheduled:
-                    live_status = 'upcoming'
+        is_live, live_status = self.extract_live_info(is_scheduled, is_live_stream, is_broadcast)
 
-        is_live = live_status == 'live'
 
         subtitles = {}
         formats = []
@@ -720,11 +706,27 @@ class FacebookIE(InfoExtractor):
         return channel_id, video_id
 
     def resolve_new_ui_live_info(self, webpage, tahoe_data):
+
+        is_scheduled = '"isScheduledLive":true' in tahoe_data.secondary
+        is_live_stream = self._search_regex(r'"isLiveVOD":(.+?),', tahoe_data.secondary, "vod_live")
+        is_broadcast = '"isLiveBroadcast":true' in webpage
+
+        return self.extract_live_info(is_scheduled, is_live_stream, is_broadcast)
+
+
+    def extract_live_info(self, is_scheduled, is_live_stream, is_broadcast):
         live_status = 'not_live'
-        is_live_vod = self._search_regex(r'"isLiveVOD":(.+?),', tahoe_data.secondary, "vod_live")
-        if is_live_vod:
-            live_status ='live'
-        return is_live_vod, live_status
+        if is_broadcast:
+            live_status = 'completed'
+            if is_live_stream:
+                live_status = 'live'
+                if is_scheduled:
+                    live_status = 'upcoming'
+
+        is_live = live_status == 'live'
+
+        return is_live, live_status
+
 
     def resolve_new_ui_format(self, webpage):
         format_url = self.build_format_url(webpage)
