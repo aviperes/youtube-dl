@@ -383,7 +383,7 @@ class FacebookIE(InfoExtractor):
                 self.raise_login_required()
 
         if not video_data:
-            info_dict = self.get_from_new_ui(webpage, tahoe_data, url)
+            info_dict = self.get_from_new_ui(webpage, tahoe_data, video_id)
             if info_dict:
                 return webpage, info_dict
 
@@ -448,11 +448,7 @@ class FacebookIE(InfoExtractor):
                    _lowercase_escape(self._search_regex(r'\"ownerName\":"(.+?)"', tahoe_data.secondary, 'uploader_id', fatal=False)) or \
                    self._search_regex(r'ownerName"\s*:\s*"([^"]+)"', webpage, 'uploader', default=None) or \
                    self._og_search_title(webpage, default=None)
-
-        timestamp = self._search_regex(
-                r'datePublished":"(.+?)"', webpage,'timestamp', default=None)\
-                 or self._search_regex(r'datePublished":"(.+?)"', tahoe_data.secondary, 'timestamp', default=None)\
-                 or self._search_regex(r'datePublished":"(.+?)"', tahoe_data.primary, 'timestamp', default=None)
+        timestamp = self._resolve_timestamp(webpage, tahoe_data)
         timestamp = parse_iso8601(timestamp)
 
         if timestamp == None and webpage.find('Paid Partnership') == -1 or\
@@ -498,25 +494,31 @@ class FacebookIE(InfoExtractor):
 
 
 
-    def get_from_new_ui(self, webpage, tahoe_data, url):
+    def get_from_new_ui(self, webpage, tahoe_data, video_id):
 
         video_title = self._search_regex(r'"headline":"(.+?")', webpage, 'title', fatal=False)
         if not video_title:
             video_title = self._search_regex(r'"pageTitle">(.+?)<', webpage, 'title', fatal=False)
         if not video_title:
             video_title = self._extract_video_title(webpage, tahoe_data, video_id)
+
         comments_count = parse_count(self._search_regex(r'"commentCount":(.+?,)', webpage, 'comments_count', fatal=False))
+        if comments_count is None:
+            comments_count = parse_count(self._search_regex(r'"commentcount":(.+?,)', tahoe_data.secondary, 'comments_count', fatal=False))
+        if comments_count is None:
+            comments_count = parse_count(self._extract_comments_count(webpage, tahoe_data))
+
         likes = parse_count(self._extract_likes(webpage, tahoe_data))
 
-        timestamp = self._search_regex(r'"datePublished":"(.+?)"', webpage, 'timestamp')
+        timestamp = self._search_regex(r'"datePublished":"(.+?)"', webpage, 'timestamp', fatal=False)
+        if not timestamp:
+            timestamp = self._resolve_timestamp(webpage, tahoe_data)
         timestamp = parse_iso8601(timestamp)
 
         uploader_json = self._search_regex(r'"author":{(.+?)}', webpage, 'uploader')
         uploader_handle, uploader = self._extract_uploader_info_new_ui(uploader_json)
 
-        ids_json = self._search_regex(r'data-video-channel-id="(.+?)"', webpage, 'ids')
         uploader_id = self._resolve_uploader_id(webpage, tahoe_data)
-        video_id = self._extract_ids_info_new_ui(ids_json)
 
         post_view_counts = parse_count(self._search_regex(r'"postViewCount":(.+?),', tahoe_data.secondary, 'views'))
         other_post_view_counts = parse_count(self._search_regex(r'"otherPostsViewCount":(.+?),', tahoe_data.secondary, 'other_views'))
@@ -756,6 +758,13 @@ class FacebookIE(InfoExtractor):
                       self._search_regex(r'content_owner_id_new\\":\\"(\d+)\\"', tahoe_data.secondary, 'uploader_id',
                                          fatal=False)
         return uploader_id
+
+    def _resolve_timestamp(self, webpage, tahoe_data):
+        timestamp = self._search_regex(
+            r'datePublished":"(.+?)"', webpage, 'timestamp', default=None) \
+                    or self._search_regex(r'datePublished":"(.+?)"', tahoe_data.secondary, 'timestamp', default=None) \
+                    or self._search_regex(r'datePublished":"(.+?)"', tahoe_data.primary, 'timestamp', default=None)
+        return timestamp
 
 class FacebookTahoeData:
     def __init__(self, extractor, page, video_id):
