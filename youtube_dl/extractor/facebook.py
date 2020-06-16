@@ -487,6 +487,9 @@ class FacebookIE(InfoExtractor):
             self._search_regex(r'content_owner_id_new\\":\\"(\d+)\\"', tahoe_data.secondary, 'uploader_id', fatal=False)
 
         thumbnail = self._html_search_meta(['og:image', 'twitter:image'], webpage)
+        if not thumbnail:
+            thumbnail = self._search_regex(r'"subtitles_src":"(.+?")', tahoe_data.primary, 'thumbnail', fatal=False)
+
         if is_live:
             view_count = parse_count(
                 self._search_regex(r'viewerCount:([\d]+)', webpage, 'views', fatal=False) or \
@@ -630,16 +633,16 @@ class FacebookIE(InfoExtractor):
         video_title = self._html_search_regex(
             r'<h2\s+[^>]*class="uiHeaderTitle"[^>]*>([^<]*)</h2>', webpage,
             'title', default=None)
-        if not video_title:
+        if not video_title or u'Log In or Sign Up to View' in video_title:
             video_title = self._html_search_regex(
                 r'(?s)<span class="fbPhotosPhotoCaption".*?id="fbPhotoPageCaption"><span class="hasCaption">(.*?)</span>',
                 webpage, 'alternative title', default=None)
-        if not video_title:
+        if not video_title or u'Log In or Sign Up to View' in video_title:
             video_title = self._og_search_title(webpage, default=None)
-        if not video_title:
+        if not video_title or u'Log In or Sign Up to View' in video_title:
             video_title = self._html_search_meta(
                 'description', webpage, 'title', default=None)
-        if not video_title:
+        if not video_title or u'Log In or Sign Up to View' in video_title:
             values = re.findall(r'videoTitle"\s*:\s*"(.*?)"', tahoe_data.secondary)
             if values:
                 video_title = values[-1]
