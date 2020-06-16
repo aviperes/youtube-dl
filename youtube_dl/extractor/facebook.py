@@ -820,9 +820,8 @@ class FacebookIE(InfoExtractor):
         return thumbnail
 
     def _valid_video_title(self, video_title):
-        if video_title and not u'Log In or Sign Up to View' in video_title:
-            return True
-        return False
+        return video_title and not u'Log In or Sign Up to View' in video_title
+
 
 
 class FacebookTahoeData:
