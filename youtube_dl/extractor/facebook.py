@@ -490,9 +490,7 @@ class FacebookIE(InfoExtractor):
 
         uploader_id = self._resolve_uploader_id(webpage, tahoe_data)
 
-        thumbnail = self._html_search_meta(['og:image', 'twitter:image'], webpage)
-        if not thumbnail:
-            thumbnail = self._search_regex(r'"subtitles_src":"(.+?")', tahoe_data.primary, 'thumbnail', fatal=False)
+        thumbnail = self._resolve_thumbnail(webpage, tahoe_data)
 
         if is_live:
             view_count = parse_count(
@@ -696,16 +694,16 @@ class FacebookIE(InfoExtractor):
         video_title = self._html_search_regex(
             r'<h2\s+[^>]*class="uiHeaderTitle"[^>]*>([^<]*)</h2>', webpage,
             'title', default=None)
-        if not video_title or u'Log In or Sign Up to View' in video_title:
+        if not self._valid_video_title(video_title):
             video_title = self._html_search_regex(
                 r'(?s)<span class="fbPhotosPhotoCaption".*?id="fbPhotoPageCaption"><span class="hasCaption">(.*?)</span>',
                 webpage, 'alternative title', default=None)
-        if not video_title or u'Log In or Sign Up to View' in video_title:
+        if not self._valid_video_title(video_title):
             video_title = self._og_search_title(webpage, default=None)
-        if not video_title or u'Log In or Sign Up to View' in video_title:
+        if not self._valid_video_title(video_title):
             video_title = self._html_search_meta(
                 'description', webpage, 'title', default=None)
-        if not video_title or u'Log In or Sign Up to View' in video_title:
+        if not self._valid_video_title(video_title):
             values = re.findall(r'videoTitle"\s*:\s*"(.*?)"', tahoe_data.secondary)
             if values:
                 video_title = values[-1]
@@ -814,6 +812,17 @@ class FacebookIE(InfoExtractor):
             timestamp = self._resolve_timestamp(webpage, tahoe_data)
         timestamp = parse_iso8601(timestamp)
         return timestamp
+
+    def _resolve_thumbnail(self, webpage, tahoe_data):
+        thumbnail = self._html_search_meta(['og:image', 'twitter:image'], webpage)
+        if not thumbnail:
+            thumbnail = self._search_regex(r'"subtitles_src":"(.+?")', tahoe_data.primary, 'thumbnail', fatal=False)
+        return thumbnail
+
+    def _valid_video_title(self, video_title):
+        if video_title and not u'Log In or Sign Up to View' in video_title:
+            return True
+        return False
 
 
 class FacebookTahoeData:
