@@ -21,6 +21,8 @@ from ..utils import (
     orderedSet,
     parse_duration,
     parse_iso8601,
+    qualities,
+    str_or_none,
     try_get,
     unified_timestamp,
     update_url_query,
@@ -50,8 +52,14 @@ class TwitchBaseIE(InfoExtractor):
 
     def _call_api(self, path, item_id, *args, **kwargs):
         headers = kwargs.get('headers', {}).copy()
-        headers['Client-ID'] = self._CLIENT_ID
-        kwargs['headers'] = headers
+        headers.update({
+            'Accept': 'application/vnd.twitchtv.v5+json; charset=UTF-8',
+            'Client-ID': self._CLIENT_ID,
+        })
+        kwargs.update({
+            'headers': headers,
+            'expected_status': (400, 410),
+        })
         response = self._download_json(
             '%s/%s' % (self._API_BASE, path), item_id,
             *args, **compat_kwargs(kwargs))
@@ -186,17 +194,34 @@ class TwitchItemBaseIE(TwitchBaseIE):
             is_live = False
         else:
             is_live = None
+        _QUALITIES = ('small', 'medium', 'large')
+        quality_key = qualities(_QUALITIES)
+        thumbnails = []
+        preview = info.get('preview')
+        if isinstance(preview, dict):
+            for thumbnail_id, thumbnail_url in preview.items():
+                thumbnail_url = url_or_none(thumbnail_url)
+                if not thumbnail_url:
+                    continue
+                if thumbnail_id not in _QUALITIES:
+                    continue
+                thumbnails.append({
+                    'url': thumbnail_url,
+                    'preference': quality_key(thumbnail_id),
+                })
         return {
             'id': info['_id'],
             'title': info.get('title') or 'Untitled Broadcast',
             'description': info.get('description'),
             'duration': int_or_none(info.get('length')),
-            'thumbnail': info.get('preview'),
+            'thumbnails': thumbnails,
             'uploader': info.get('channel', {}).get('display_name'),
             'uploader_id': info.get('channel', {}).get('name'),
+            'uploader_handle': info.get('channel', {}).get('name'),
             'timestamp': parse_iso8601(info.get('recorded_at')),
             'view_count': int_or_none(info.get('views')),
             'is_live': is_live,
+            'uploader_like_count': info['channel'].get('followers')
         }
 
     def _real_extract(self, url):
@@ -349,17 +374,19 @@ class TwitchVodIE(TwitchItemBaseIE):
                     'ext': 'json',
                 }],
             }
+        """
         channel_id = info['uploader_id']
         channel = self._call_api(
             'kraken/channels/%s' % channel_id,
             channel_id, 'Downloading channel info JSON')
 
         info['uploader_like_count'] = channel.get('followers')
-
+        
         description = info['description']
         if description is None:
             description = channel.get('status')
         info['description'] = description
+        """
 
         return info
 
@@ -583,10 +610,18 @@ class TwitchStreamIE(TwitchBaseIE):
                 else super(TwitchStreamIE, cls).suitable(url))
 
     def _real_extract(self, url):
-        channel_id = self._match_id(url)
+        channel_name = self._match_id(url)
+
+        access_token = self._call_api(
+            'api/channels/%s/access_token' % channel_name, channel_name,
+            'Downloading access token JSON')
+
+        token = access_token['token']
+        channel_id = compat_str(self._parse_json(
+            token, channel_name)['channel_id'])
 
         stream = self._call_api(
-            'kraken/streams/%s?stream_type=all' % channel_id.lower(),
+            'kraken/streams/%s?stream_type=all' % channel_id,
             channel_id, 'Downloading stream JSON').get('stream')
 
         if not stream:
@@ -596,11 +631,9 @@ class TwitchStreamIE(TwitchBaseIE):
         # (e.g. http://www.twitch.tv/TWITCHPLAYSPOKEMON) that will lead to constructing
         # an invalid m3u8 URL. Working around by use of original channel name from stream
         # JSON and fallback to lowercase if it's not available.
-        channel_id = stream.get('channel', {}).get('name') or channel_id.lower()
-
-        access_token = self._call_api(
-            'api/channels/%s/access_token' % channel_id, channel_id,
-            'Downloading channel access token')
+        channel_name = try_get(
+            stream, lambda x: x['channel']['name'],
+            compat_str) or channel_name.lower()
 
         query = {
             'allow_source': 'true',
@@ -611,11 +644,11 @@ class TwitchStreamIE(TwitchBaseIE):
             'playlist_include_framerate': 'true',
             'segment_preference': '4',
             'sig': access_token['sig'].encode('utf-8'),
-            'token': access_token['token'].encode('utf-8'),
+            'token': token.encode('utf-8'),
         }
         formats = self._extract_m3u8_formats(
             '%s/api/channel/hls/%s.m3u8?%s'
-            % (self._USHER_BASE, channel_id, compat_urllib_parse_urlencode(query)),
+            % (self._USHER_BASE, channel_name, compat_urllib_parse_urlencode(query)),
             channel_id, 'mp4')
         self._prefer_source(formats)
 
@@ -638,13 +671,14 @@ class TwitchStreamIE(TwitchBaseIE):
             })
 
         return {
-            'id': compat_str(stream['_id']),
-            'display_id': channel_id,
+            'id': str_or_none(stream.get('_id')) or channel_id,
+            'display_id': channel_name,
             'title': title,
             'description': description,
             'thumbnails': thumbnails,
             'uploader': channel.get('display_name'),
             'uploader_id': channel.get('name'),
+            'uploader_handle': channel.get('name'),
             'timestamp': timestamp,
             'view_count': view_count,
             'formats': formats,
@@ -699,36 +733,38 @@ class TwitchClipsIE(TwitchBaseIE):
     def _real_extract(self, url):
         video_id = self._match_id(url)
 
-        clip = self._download_json(
+        response = self._download_json(
             'https://gql.twitch.tv/gql', video_id, data=json.dumps({
                 'query': '''{
-  clip(slug: "%s") {
-    broadcaster {
-      displayName
-      id
-    }
-    createdAt
-    curator {
-      displayName
-      id
-    }
-    durationSeconds
-    id
-    tiny: thumbnailURL(width: 86, height: 45)
-    small: thumbnailURL(width: 260, height: 147)
-    medium: thumbnailURL(width: 480, height: 272)
-    title
-    videoQualities {
-      frameRate
-      quality
-      sourceURL
-    }
-    viewCount
-  }
-}''' % video_id,
+              clip(slug: "%s") {
+                broadcaster {
+                  displayName
+                  id                  
+                }
+                createdAt
+                curator {
+                  displayName
+                  id                                  
+                }
+                durationSeconds
+                id
+                tiny: thumbnailURL(width: 86, height: 45)
+                small: thumbnailURL(width: 260, height: 147)
+                medium: thumbnailURL(width: 480, height: 272)
+                title
+                videoQualities {
+                  frameRate
+                  quality
+                  sourceURL
+                }
+                viewCount
+              }
+            }''' % video_id,
             }).encode(), headers={
                 'Client-ID': self._CLIENT_ID,
-            })['data']['clip']
+            })
+
+        clip = response['data']['clip']
 
         if not clip:
             raise ExtractorError(
@@ -766,16 +802,26 @@ class TwitchClipsIE(TwitchBaseIE):
                 })
             thumbnails.append(thumb)
 
+        channel_id = clip['broadcaster']['id']
+        channel = self._call_api(
+            'kraken/channels/%s' % channel_id,
+            channel_id, 'Downloading channel info JSON')
+
+        uploader_like_count = channel.get('followers')
+        broadcaster_handle = channel.get('name')
         return {
             'id': clip.get('id') or video_id,
             'title': clip.get('title') or video_id,
             'formats': formats,
             'duration': int_or_none(clip.get('durationSeconds')),
-            'views': int_or_none(clip.get('viewCount')),
+            'view_count': int_or_none(clip.get('viewCount')),
             'timestamp': unified_timestamp(clip.get('createdAt')),
             'thumbnails': thumbnails,
             'creator': try_get(clip, lambda x: x['broadcaster']['displayName'], compat_str),
             'creator_id': try_get(clip, lambda x: x['broadcaster']['id'], compat_str),
+            'broadcaster_handle': broadcaster_handle,
             'uploader': try_get(clip, lambda x: x['curator']['displayName'], compat_str),
             'uploader_id': try_get(clip, lambda x: x['curator']['id'], compat_str),
+            'uploader_handle': try_get(clip, lambda x: x['curator']['id'], compat_str),
+            'uploader_like_count': uploader_like_count
         }

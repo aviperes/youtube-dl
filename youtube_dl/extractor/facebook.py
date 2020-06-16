@@ -1,7 +1,5 @@
 # coding: utf-8
 from __future__ import unicode_literals
-
-import datetime
 import re
 import socket
 
@@ -11,7 +9,7 @@ from ..compat import (
     compat_http_client,
     compat_urllib_error,
     compat_urllib_parse_unquote,
-    compat_urllib_parse_unquote_plus,
+    compat_urllib_parse_unquote_plus
 )
 from ..utils import (
     clean_html,
@@ -27,10 +25,9 @@ from ..utils import (
     urlencode_postdata,
     update_url_query,
     lowercase_escape,
-    parse_iso8601
+    parse_iso8601,
+    unescapeHTML,
 )
-
-
 
 class FacebookIE(InfoExtractor):
     _VALID_URL = r'''(?x)
@@ -385,7 +382,12 @@ class FacebookIE(InfoExtractor):
             elif '>You must log in to continue' in webpage:
                 self.raise_login_required()
 
-        if not video_data :
+        if not video_data:
+            info_dict = self.get_from_new_ui(webpage, tahoe_data, video_id)
+            if info_dict:
+                return webpage, info_dict
+
+        if not video_data:
             if self._search_regex(r'newsFeedStream.*?<h1><span class.*?>(.*?)<\/span><\/h1>', webpage, "video_title") is not None:
                 self.raise_login_required()
             raise ExtractorError('Cannot parse data')
@@ -394,15 +396,8 @@ class FacebookIE(InfoExtractor):
         is_live_stream = video_data[0].get('is_live_stream', False)
         is_broadcast = video_data[0].get('is_broadcast', False)
 
-        live_status = 'not_live'
-        if is_broadcast:
-            live_status = 'completed'
-            if is_live_stream:
-                live_status = 'live'
-                if is_scheduled:
-                    live_status = 'upcoming'
+        is_live, live_status = self.extract_live_info(is_scheduled, is_live_stream, is_broadcast)
 
-        is_live = live_status == 'live'
 
         subtitles = {}
         formats = []
@@ -453,6 +448,8 @@ class FacebookIE(InfoExtractor):
                    _lowercase_escape(self._search_regex(r'\"ownerName\":"(.+?)"', tahoe_data.secondary, 'uploader_id', fatal=False)) or \
                    self._search_regex(r'ownerName"\s*:\s*"([^"]+)"', webpage, 'uploader', default=None) or \
                    self._og_search_title(webpage, default=None)
+        timestamp = self._resolve_timestamp(webpage, tahoe_data)
+        timestamp = parse_iso8601(timestamp)
 
         timestamp = self._search_regex(
                 r'datePublished":"(.+?)"', webpage,
@@ -478,13 +475,20 @@ class FacebookIE(InfoExtractor):
                              or self._search_regex(r'publish_time&quot;:([\d]+)', tahoe_data.secondary, 'timestamp', default=None))
 
 
-        uploader_id = self._search_regex(
-            r'ownerid:"([\d]+)', webpage,
-            'uploader_id', default=None) or self._search_regex(
-            r'[\'\"]ownerid[\'\"]\s*:\s*[\'\"](\d+)[\'\"]',tahoe_data.secondary,
-            'uploader_id', default=None) or \
-            self._search_regex(r'\\\"page_id\\\"\s*:\s*\\\"(\d+)\\\"', tahoe_data.secondary, 'uploader_id', fatal=False) or \
-            self._search_regex(r'content_owner_id_new\\":\\"(\d+)\\"', tahoe_data.secondary, 'uploader_id', fatal=False)
+            regex_search_result_date_time = self._search_regex(r'data-utime=\\\"(\d+)\\\"', tahoe_data.secondary, 'timestamp', default=None)\
+                or self._search_regex(r'data-utime=\\\"(\d+)\\\"', tahoe_data.primary, 'timestamp', default=None)\
+                or self._search_regex(r'data-utime=\\\"(\d+)\\\"', webpage,'timestamp', default=None)\
+                or self._search_regex(r'<abbr[^>]+data-utime=["\'](\d+)', webpage, 'timestamp', default=None)\
+                or self._search_regex(r'<abbr[^>]+data-utime=["\'](\d+)', tahoe_data.secondary, 'timestamp', default=None)\
+                or self._search_regex(r'<abbr[^>]+data-utime=["\'](\d+)', tahoe_data.primary, 'timestamp', default=None)
+
+            regex_search_result_publish_time = self._search_regex(r'publish_time&quot;:([\d]+)', webpage, 'timestamp', default=None)\
+                             or self._search_regex(r'publish_time&quot;:([\d]+)', tahoe_data.primary, 'timestamp', default=None)\
+                             or self._search_regex(r'publish_time&quot;:([\d]+)', tahoe_data.secondary, 'timestamp', default=None)
+
+            timestamp = int_or_none(regex_search_result_date_time) or int_or_none(regex_search_result_publish_time)
+
+        uploader_id = self._resolve_uploader_id(webpage, tahoe_data)
 
         thumbnail = self._html_search_meta(['og:image', 'twitter:image'], webpage)
         if not thumbnail:
@@ -504,6 +508,52 @@ class FacebookIE(InfoExtractor):
         comment_count = parse_count(self._extract_comments_count(webpage, tahoe_data))
 
         uploader_handle = self._resolve_uploader_handle(tahoe_data, uploader_id)
+
+        info_dict = self.build_info_dict(webpage, tahoe_data, video_id, video_title, formats, uploader, timestamp,
+                                         thumbnail, view_count, uploader_id, is_live, live_status, likes_count,
+                                         shares_count, subtitles, comment_count, other_posts_view_count, uploader_handle)
+
+        return webpage, info_dict
+
+
+
+    def get_from_new_ui(self, webpage, tahoe_data, video_id):
+
+        video_title = self._resolve_new_ui_title(webpage, tahoe_data, video_id)
+
+        comments_count = self._resolve_new_ui_comments_count(webpage, tahoe_data)
+
+        likes = parse_count(self._extract_likes(webpage, tahoe_data))
+
+        timestamp = self._resolve_new_ui_timestamp(webpage, tahoe_data)
+
+        uploader_json = self._search_regex(r'"author":{(.+?)}', webpage, 'uploader')
+        uploader_handle, uploader = self._extract_uploader_info_new_ui(uploader_json)
+
+        uploader_id = self._resolve_uploader_id(webpage, tahoe_data)
+
+        post_view_counts = parse_count(self._search_regex(r'"postViewCount":(.+?),', tahoe_data.secondary, 'views'))
+        other_post_view_counts = parse_count(self._search_regex(r'"otherPostsViewCount":(.+?),', tahoe_data.secondary, 'other_views'))
+
+        share_counts = parse_count(self._search_regex(r'"sharecount":(.+?),', tahoe_data.secondary, 'other_views'))
+
+        thumbnail = self._search_regex(r'"thumbnailUrl":"(.+?)"', webpage, 'thumbnail')
+
+        is_live, live_status = self.resolve_new_ui_live_info(webpage, tahoe_data)
+
+        formats = self.resolve_new_ui_format(webpage)
+
+        info_dict = self.build_info_dict(webpage, tahoe_data, video_id, video_title, formats, uploader, timestamp,
+                                         thumbnail, post_view_counts, uploader_id, is_live, live_status, likes,
+                                         share_counts, {}, comments_count, other_post_view_counts,
+                                         uploader_handle)
+
+        return info_dict
+
+    def build_info_dict(self,webpage, tahoe_data, video_id, video_title=None, formats=None, uploader=None,
+                        timestamp=None, thumbnail=None, view_count=None, uploader_id=None, is_live=None, live_status=None,
+                        likes_count=None, shares_count=None, subtitles=None, comment_count=None, other_posts_view_count=None,
+                        uploader_handle=None):
         info_dict = {
             'id': video_id,
             'title': video_title,
@@ -529,7 +579,7 @@ class FacebookIE(InfoExtractor):
         if uploader_id:
             info_dict['uploader_like_count'] = FacebookAjax(self, webpage, uploader_id).page_likes
 
-        return webpage, info_dict
+        return info_dict
 
     def _resolve_uploader_handle(self, tahoe_data, uploader_id):
         uploader_handle = self._search_regex(r'"video_path":"\\\/([^\/]+)\\\/', tahoe_data.primary, 'uploader_handle',
@@ -560,18 +610,24 @@ class FacebookIE(InfoExtractor):
 
         return value
 
+    @staticmethod
+    def _extract_first_pattern(pairs):
+        for pattern, data_list in pairs:
+            if not isinstance(data_list, list):
+                data_list = [data_list]
+            for data in data_list:
+                values = re.findall(pattern, data)
+                if values:
+                    return values[-1]
+
     def _extract_likes(self, webpage, tahoe_data):
-        values = re.findall(r'\blikecount\s*:\s*["\']([\d,.]+)', webpage)
-        if values:
-            return values[-1]
-
-        values = re.findall(r'[\'\"]\blikecount[\'\"]\s*:\s*(\d+)', tahoe_data.secondary)
-        if values:
-            return values[-1]
-
-        values = re.findall(r'"reaction_count"\s*:\s*{\s*"count"\s*:\s*(\d+)', tahoe_data.secondary)
-        if values:
-            return values[-1]
+        pairs = (
+            (r'"reaction_count"\s*:\s*{\s*"count"\s*:\s*(\d+)', [tahoe_data.secondary, webpage]),
+            (r'reaction_count:{count:([\d]+)}', webpage),
+            (r'\blikecount\s*:\s*["\']([\d,.]+)', webpage),
+            (r'[\'\"]\blikecount[\'\"]\s*:\s*(\d+)', tahoe_data.secondary)
+        )
+        return self._extract_first_pattern(pairs)
 
     def _extract_shares(self, webpage, tahoe_data):
         value = self._extract_meta_count(['sharecount'], webpage, tahoe_data, 'shares')
@@ -596,6 +652,10 @@ class FacebookIE(InfoExtractor):
         if value:
             return value
 
+        values = re.findall(r'(\d.\d+\w?) Views', tahoe_data.secondary)
+        if values:
+            return values[-1]
+
         values = re.findall(r'(\d+\w?) Views', tahoe_data.secondary)
         if values:
             return values[-1]
@@ -614,15 +674,18 @@ class FacebookIE(InfoExtractor):
             return info_dict
 
         if '/posts/' in url:
-            entries = [
-                self.url_result('facebook:%s' % vid, FacebookIE.ie_key())
-                for vid in self._parse_json(
-                    self._search_regex(
-                        r'(["\'])video_ids\1\s*:\s*(?P<ids>\[.+?\])',
-                        webpage, 'video ids', group='ids'),
-                    video_id)]
+            video_id_json = self._search_regex(
+                r'(["\'])video_ids\1\s*:\s*(?P<ids>\[.+?\])', webpage, 'video ids', group='ids',
+                default='')
+            if video_id_json:
+                entries = [
+                    self.url_result('facebook:%s' % vid, FacebookIE.ie_key())
+                    for vid in self._parse_json(video_id_json, video_id)]
+                return self.playlist_result(entries, video_id)
 
-            return self.playlist_result(entries, video_id)
+            # Single Video?
+            video_id = self._search_regex(r'video_id:\s*"([0-9]+)"', webpage, 'single video id')
+            return self.url_result('facebook:%s' % video_id, FacebookIE.ie_key())
         else:
             _, info_dict = self._extract_from_url(
                 self._VIDEO_PAGE_TEMPLATE % video_id,
@@ -651,6 +714,107 @@ class FacebookIE(InfoExtractor):
         else:
             video_title = 'Facebook video #%s' % video_id
         return video_title
+
+    def _extract_uploader_info_new_ui(self, uploader_json):
+        uploader_handle = self._search_regex(r'"name":"(.+?")', uploader_json, 'uploader')
+        uploader_url = self._search_regex(r'"url":"(.+?")', uploader_json, 'uploader_url')
+        uploader_url_str = uploader_url.decode("utf-8")
+        uploader = uploader_url_str.split('\\/')[-2]
+        return uploader_handle, uploader
+
+    def _extract_ids_info_new_ui(self, ids_json):
+        ids_json_str = ids_json.decode("utf-8")
+        ids = ids_json_str.split(':')
+        video_id = ids[1]
+        return video_id
+
+    def resolve_new_ui_live_info(self, webpage, tahoe_data):
+
+        is_scheduled = '"isScheduledLive":true' in tahoe_data.secondary
+        is_live_stream = self._search_regex(r'"isLiveVOD":(.+?),', tahoe_data.secondary, "vod_live")
+        is_broadcast = '"isLiveBroadcast":true' in webpage
+
+        return self.extract_live_info(is_scheduled, is_live_stream, is_broadcast)
+
+
+    def extract_live_info(self, is_scheduled, is_live_stream, is_broadcast):
+        live_status = 'not_live'
+        if is_broadcast:
+            live_status = 'completed'
+        if is_live_stream:
+            live_status = 'live'
+        if is_scheduled:
+            live_status = 'upcoming'
+
+        is_live = live_status == 'live'
+
+        return is_live, live_status
+
+
+    def resolve_new_ui_format(self, webpage):
+        format_url = self.build_format_url(webpage)
+        width = parse_count(self._search_regex(r'<meta property="og:video:width" content="(.+?)"', webpage, 'width'))
+        height = parse_count(self._search_regex(r'<meta property="og:video:height" content="(.+?)"', webpage, 'height'))
+
+        formats = []
+        formats.append({
+            'url': format_url,
+            'height': width,
+            'width': height,
+            'ext': 'mp4',
+        })
+        return formats
+
+    def build_format_url(self, webpage):
+        content_url = self._search_regex(r' content="https(.+?)"', webpage, 'url', fatal=False)
+        format_url = 'https%s' % content_url
+        format_url = unescapeHTML(format_url)
+        return format_url
+
+    def _resolve_uploader_id(self, webpage, tahoe_data):
+        uploader_id = self._search_regex(
+            r'ownerid:"([\d]+)', webpage,
+            'uploader_id', default=None) or self._search_regex(
+            r'[\'\"]ownerid[\'\"]\s*:\s*[\'\"](\d+)[\'\"]', tahoe_data.secondary,
+            'uploader_id', default=None) or \
+                      self._search_regex(r'\\\"page_id\\\"\s*:\s*\\\"(\d+)\\\"', tahoe_data.secondary, 'uploader_id',
+                                         fatal=False) or \
+                      self._search_regex(r'content_owner_id_new\\":\\"(\d+)\\"', tahoe_data.secondary, 'uploader_id',
+                                         fatal=False)
+        return uploader_id
+
+    def _resolve_timestamp(self, webpage, tahoe_data):
+        timestamp = self._search_regex(
+            r'datePublished":"(.+?)"', webpage, 'timestamp', default=None) \
+                    or self._search_regex(r'datePublished":"(.+?)"', tahoe_data.secondary, 'timestamp', default=None) \
+                    or self._search_regex(r'datePublished":"(.+?)"', tahoe_data.primary, 'timestamp', default=None)
+        return timestamp
+
+    def _resolve_new_ui_title(self, webpage, tahoe_data, video_id):
+        video_title = self._search_regex(r'"headline":"(.+?")', webpage, 'title', fatal=False)
+        if not video_title:
+            video_title = self._search_regex(r'"pageTitle">(.+?)<', webpage, 'title', fatal=False)
+        if not video_title:
+            video_title = self._extract_video_title(webpage, tahoe_data, video_id)
+        return video_title
+
+    def _resolve_new_ui_comments_count(self, webpage, tahoe_data):
+        comments_count = parse_count(
+            self._search_regex(r'"commentCount":(.+?,)', webpage, 'comments_count', fatal=False))
+        if comments_count is None:
+            comments_count = parse_count(
+                self._search_regex(r'"commentcount":(.+?,)', tahoe_data.secondary, 'comments_count', fatal=False))
+        if comments_count is None:
+            comments_count = parse_count(self._extract_comments_count(webpage, tahoe_data))
+        return comments_count
+
+    def _resolve_new_ui_timestamp(self, webpage, tahoe_data):
+        timestamp = self._search_regex(r'"datePublished":"(.+?)"', webpage, 'timestamp', fatal=False)
+        if not timestamp:
+            timestamp = self._resolve_timestamp(webpage, tahoe_data)
+        timestamp = parse_iso8601(timestamp)
+        return timestamp
+
 
 class FacebookTahoeData:
     def __init__(self, extractor, page, video_id):
