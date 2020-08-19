@@ -33,7 +33,7 @@ class facebookMetaData(unittest.TestCase):
         info = ydl.extract_info(url, download=False)
         self.assertGreater(info.get('comment_count'), 0)
         self.assertTrue(info.get('uploader_handle'), 0)
-        self.assertTrue(info.get('title'))
+        self.assertGreater(len(info.get('title')), 0)
 
 
     def test_metadata_fetch_with_log_in(self):
