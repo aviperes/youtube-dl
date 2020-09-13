@@ -967,13 +967,13 @@ class TwitchStreamIE(TwitchBaseIE):
             'description': description,
             'thumbnails': thumbnails,
             'uploader': channel.get('display_name'),
-            'uploader_id': channel.get('name'),
+            'uploader_id': channel.get('_id'),
             'uploader_handle': channel.get('name'),
             'timestamp': timestamp,
             'view_count': view_count,
             'formats': formats,
             'is_live': True,
-            'uploader_like_count': stream.get('channel',{}).get('followers')
+            'uploader_like_count': channel.get('followers')
         }
 
 
