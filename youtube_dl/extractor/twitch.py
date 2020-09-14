@@ -381,10 +381,12 @@ class TwitchVodIE(TwitchBaseIE):
             'duration': int_or_none(info.get('length')),
             'thumbnails': thumbnails,
             'uploader': info.get('channel', {}).get('display_name'),
-            'uploader_id': info.get('channel', {}).get('name'),
+            'uploader_handle': info.get('channel', {}).get('name'),
+            'uploader_id': info.get('channel', {}).get('_id'),
             'timestamp': parse_iso8601(info.get('recorded_at')),
             'view_count': int_or_none(info.get('views')),
             'is_live': is_live,
+            'uploader_like_count': int_or_none(info.get('channel', {}).get('followers'))
         }
 
     def _real_extract(self, url):
@@ -965,13 +967,13 @@ class TwitchStreamIE(TwitchBaseIE):
             'description': description,
             'thumbnails': thumbnails,
             'uploader': channel.get('display_name'),
-            'uploader_id': channel.get('name'),
+            'uploader_id': channel.get('_id'),
             'uploader_handle': channel.get('name'),
             'timestamp': timestamp,
             'view_count': view_count,
             'formats': formats,
             'is_live': True,
-            'uploader_like_count': stream.get('channel',{}).get('followers')
+            'uploader_like_count': channel.get('followers')
         }
 
 
