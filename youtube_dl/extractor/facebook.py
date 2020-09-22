@@ -557,7 +557,7 @@ class FacebookIE(InfoExtractor):
             }
         }
         if uploader_id:
-            info_dict['uploader_like_count'] = FacebookAjax(self, webpage, uploader_id).page_likes
+            info_dict['uploader_like_count'] = FacebookAjax(self, webpage, uploader_id, self._CHROME_USER_AGENT).page_likes
 
         return info_dict
 
@@ -898,7 +898,7 @@ class FacebookTahoeData:
             })
         tahoe_request_headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-        }
+            }
 
         return tahoe_request_data, tahoe_request_headers
 
@@ -906,18 +906,23 @@ class FacebookTahoeData:
 class FacebookAjax:
     HOVER_URL_TEMPLATE = 'https://www.facebook.com/ajax/hovercard/user.php?id=111&fb_dtsg_ag=x&endpoint=%2Fajax%2Fhovercard%2Fuser.php%3Fid%3D111&__a=1'
 
-    def __init__(self, extractor, page, page_id):
+    def __init__(self, extractor, page, page_id, user_agent):
         self._page = page
         self._page_id = page_id
         self._extractor = extractor
         self._hover_data = None
+        self._user_agent = user_agent
 
     def _get_hover_data(self):
         if self._hover_data:
             data = self._hover_data
         else:
+            request_headers = {
+                'User-Agent': self._user_agent,
+            }
             data = self._extractor._download_webpage(
-                self._get_request_url(self._page_id), self._page_id
+                self._get_request_url(self._page_id), self._page_id,
+                headers=request_headers
             )
         return '' if not data else data
 
