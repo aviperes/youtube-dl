@@ -37,7 +37,21 @@ class PeriscopeBaseIE(InfoExtractor):
             'view_count': int_or_none(broadcast.get('total_watched')),
             'tags': broadcast.get('tags'),
             'is_live': is_live,
+            'uploader_handle': broadcast.get('username').lower(),
+            'duration': self._extract_duration_from_broadcast(broadcast)
         }
+
+    @staticmethod
+    def _extract_duration_from_broadcast(broadcast):
+        start = parse_iso8601(broadcast.get('start'))
+        end = parse_iso8601(broadcast.get('end'))
+        if not end:
+            end = parse_iso8601(broadcast.get('timedout'))
+        if end:
+            duration = end - start
+        else:
+            duration = None
+        return duration
 
     @staticmethod
     def _extract_common_format_info(broadcast):
